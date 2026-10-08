@@ -9,7 +9,7 @@ weigh, and stamp each child GIFT or COAL before the shift clock runs out.
 The system never tells you whether you judged well. At the end of the
 season, it audits you — with the same checklist.
 
-**Play:** https://YOURNAME.github.io/clause-11-c/
+**Play:** [https://YOURNAME.github.io/clause-11-c/](https://thinhnguyen5973.github.io/Clause-11-C/)
 
 One season ≈ 90 minutes. No account, no save file: like the children,
 each performance is unrepeatable.
