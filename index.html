@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CLAUSE 11-C</title>
+<style>
+  :root { --ph: #4dff88; --dim: rgba(77,255,136,.55); }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #020604; color: var(--ph);
+    font-family: 'VT323', 'Courier New', monospace; font-size: 19px; line-height: 1.45; }
+  body::before { content:''; position: fixed; inset: 0; pointer-events: none; z-index: 50;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,.22) 0 1px, transparent 1px 3px); }
+  body::after { content:''; position: fixed; inset: 0; pointer-events: none; z-index: 51;
+    background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,.55) 100%); }
+  #crt { animation: flick 5s infinite; transform-origin: 50% 50%;
+    transition: transform .16s ease-in, opacity .3s ease-in .16s; }
+  @keyframes flick { 0%,100%{opacity:1} 3%{opacity:.972} 5%{opacity:1} 47%{opacity:.99}
+    48%{opacity:.955} 49%{opacity:1} 81%{opacity:.985} 82.5%{opacity:1} }
+  #crt.off1 { transform: scaleY(.004); }
+  #crt.off2 { transform: scaleY(.004) scaleX(0); opacity: 0; }
+  .hum { position: fixed; left: 0; right: 0; height: 90px; z-index: 49; pointer-events: none;
+    background: linear-gradient(180deg, transparent, rgba(120,255,160,.05), transparent);
+    animation: humroll 7s linear forwards; }
+  @keyframes humroll { from { top: -100px } to { top: 110% } }
+  #bar { position: fixed; top: 0; left: 0; right: 0; z-index: 40; height: 34px;
+    display: flex; align-items: center; gap: 20px; padding: 0 16px;
+    background: rgba(2,6,4,.92); border-bottom: 1px solid rgba(77,255,136,.35);
+    font-size: 16px; letter-spacing: .06em; }
+  #clock.short, .alert { animation: blink .8s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+  #wrap { max-width: 860px; margin: 0 auto; padding: 48px 22px 60px; }
+  .glow { text-shadow: 0 0 5px rgba(77,255,136,.45); }
+  .doc { border: 1px solid rgba(77,255,136,.35); margin: 14px 0; padding: 10px 14px; white-space: pre-wrap; }
+  .doc h3 { margin: -10px -14px 8px; padding: 3px 14px; font-size: 16px; font-weight: normal;
+    background: rgba(77,255,136,.12); letter-spacing: .08em; }
+  .ledger { white-space: pre; }
+  .btn { display: inline-block; border: 1px solid var(--ph); padding: 10px 16px; margin: 0 10px 8px 0; cursor: pointer; user-select: none; }
+  .btn:hover { background: rgba(77,255,136,.22); }
+  .cursor { animation: blink 1s steps(1) infinite; }
+  .stamp { margin: 20px 0; letter-spacing: .2em; animation: blink 2s steps(1) infinite; }
+  .fine { font-size: 15px; margin-top: 26px; border-top: 1px dashed var(--dim); padding-top: 8px; }
+  #memo { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.78); }
+  #memo .box { max-width: 640px; margin: 20px; }
+  #ghost { position: fixed; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center;
+    font-size: 20px; color: rgba(140,220,170,.55); pointer-events: none;
+    opacity: 0; transition: opacity 8s ease-in; }
+  #ghost.show { opacity: 1; }
+</style>
+<link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+</head>
+<body>
+<div id="crt">
+  <div id="bar"><span>CLAUSE 11-C</span><span id="barShift"></span><span id="barCase"></span><span id="barBudget"></span><span id="barAudio">AUDIO ON [M]</span><span id="clock">--:--</span></div>
+  <div id="wrap" class="glow"></div>
+</div>
+<script>
+'use strict';
+
+/* ---------- seeded randomness ---------- */
+function mulberry32(a){return function(){a|=0;a=(a+0x6D2B79F5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;};}
+const R = mulberry32((Date.now() ^ (Math.random()*1e9)) >>> 0);
+const pick  = a => a[Math.floor(R()*a.length)];
+const some  = (a,n) => a.slice().sort(()=>R()-.5).slice(0,n);
+const chance= p => R() < p;
+
+/* ---------- detail pools ---------- */
+const ORIGINS = {
+  domestic: { tag:'MILLBROOK', langs:'ENGLISH', names:['MARCUS T.','ELLA V.','DANI R.','JUNE K.','OTTO H.','MILA P.','SAM W.'] },
+  harbor:   { tag:'HARBOR DISTRICT 3', langs:'ENGLISH; KREOL (HOUSEHOLD)', names:['NOA B.','TESSA M.','REMY L.','IDA F.','CALEB O.'] },
+  rural:    { tag:'OUTLYING — RURAL ROUTE 9', langs:'ENGLISH', names:['HENRY D.','PAISLEY R.','JUDE S.','WREN N.','ELIOT G.'] },
+  reloc:    { tag:'EASTERN CORRIDOR — RELOCATED', langs:'ENGLISH; HOUSEHOLD (SEE FILE)', names:['YUSUF A.','IRINA D.','MAYA S.','PAVEL N.','LEILA B.','AMAR O.'] },
+  transit:  { tag:'TRANSIT — DISPLACED STATUS', langs:'RECORDED — DIALECTS UNVERIFIED', names:['THEO M.','NADIA F.','KOFI A.','SOFIA R.','ILYA P.'] },
+};
+const AFFILIATION = ['NONE LISTED','LISTED — NO WEIGHT ASSIGNED','PREFER NOT STATED (RECORDED: RESERVED)','LISTED (HOUSEHOLD)'];
+const FLAGS = [
+  'SUBJECT ASKS QUESTIONS DURING ASSEMBLY','EYE CONTACT — DEFICIENT (CULTURAL VARIANT UNVERIFIED)',
+  'WISH CONTENT DEVIATES FROM AGE-APPROPRIATE NORMS','ASSOCIATES WITH ADULTS OUTSIDE GUARDIAN NETWORK',
+  'UNEXPLAINED CALM','SMILES WITHOUT TRIGGER EVENT',
+];
+
+/* ---------- actions & ledger ---------- */
+const ACTIONS = {
+  food:    { label:'THEFT — PETTY', hostile:'Subject has taken food from the cafeteria on three occasions. When questioned, subject refuses to explain himself. A pattern.' },
+  medicine:{ label:'THEFT — PETTY', hostile:'Medication missing from the staff cabinet. Subject found in possession. Subject stated it was for his mother. Statement logged as unverifiable.' },
+  forgery: { label:'DECEPTION / FORGERY', hostile:'Guardian signature on three permission slips identified as forged. Subject denies nothing and explains nothing.' },
+  sibling: { label:'DECEPTION / FORGERY', hostile:'Subject confessed to breaking the household lamp. Confession extracted in 4 minutes. Sibling present. Sibling crying went unlogged.' },
+  fight:   { label:'ASSAULT — MINOR', hostile:'Altercation with a classmate. Reported as unprovoked. Both subjects decline to state the cause. Cause therefore does not exist.' },
+  tired:   { label:'CURFEW VIOLATION', hostile:'Asleep during instruction on four occasions. When awake, subject watches the clock and the door.' },
+  trespass:{ label:'TRESPASS — STRUCTURE', hostile:'Found inside the vacant property on Delancey. Subject had arranged the furniture. No damage. Trespass logged regardless.' },
+  curfew:  { label:'CURFEW VIOLATION', hostile:'Observed outside after curfew on several evenings. Subject states he was walking. Purpose of walking: unrecorded.' },
+  vandal:  { label:'VANDALISM', hostile:'Window of the summer house broken from the inside, per caretaker. Glass was removed first. Guardian reached by telephone in Singapore.' },
+  hoard:   { label:'HOARDING — COMPULSIVE', hostile:'Food found concealed in subject\'s locker. Quantity inconsistent with a single meal. Suggests a mentality.' },
+  ownforms:{ label:'DECEPTION / FORGERY', hostile:'Subject signs the placement intake forms personally. Signatures are competent. This has been noted as irregular.' },
+  homicide:{ label:'HOMICIDE (EXEMPTION CLAUSE 11-C)', hostile:'File indicates an incident under Clause 11-C during displacement. Details restricted. Recommend standard processing.' },
+  none:    { label:null, hostile:'No incidents on record. Subject shared lunch. Subject waved at a school bus for no documented reason.' },
+};
+const LEDGER = ['THEFT — PETTY','THEFT — GRAND','DECEPTION / FORGERY','TRESPASS — STRUCTURE',
+  'VANDALISM','ASSAULT — MINOR','CURFEW VIOLATION','HOARDING — COMPULSIVE','ARSON','HOMICIDE (EXEMPTION CLAUSE 11-C)'];
+
+/* ---------- environments ---------- */
+const ENVS = [
+ { id:'poverty', weight:20, origin:null, bracket:'C — DEFICIENT', household:'1 GUARDIAN (MOTHER); 2 SIBLINGS',
+   actions:['food','hoard'],
+   cause:'HOUSEHOLD INCOME CEASED IN OCTOBER. UTILITIES TERMINATED NOV 2. HUNGER NOTED IN MARGINS. NO FURTHER ACTION TAKEN.',
+   school:'SCHOOL ATTENDANCE: 91% (SEPT) → 74% (NOV)',
+   wishes:['a warm blanket. the big kind. not for me.','for the fridge to hum again. it made the kitchen feel alive.','groceries. the magic kind, so mama stops doing the receipt math out loud.'],
+   ret:{ cause:'INCOME RESUMED IN FEBRUARY. CEASED AGAIN IN SEPTEMBER. SUBJECT NOW FEEDS THE YOUNGER TWO FIRST, BEFORE ANYONE ASKS. THE MARGIN IS FULL.',
+         wish:'a coat in the middle one\'s size. the kind that lasts two winters.' } },
+ { id:'divorce', weight:15, origin:null, bracket:'B — STABLE', household:'2 GUARDIANS (ALTERNATING)',
+   actions:['forgery','fight'],
+   cause:'GUARDIAN SEPARATION FILED IN MARCH. SUBJECT TRANSFERS BETWEEN RESIDENCES WEEKLY. SUBJECT\'S SCHOOLBAG CONTAINS TWO TOOTHBRUSHES. NOBODY ASKED.',
+   school:null,
+   wishes:['for christmas morning to happen twice this year. once at each house. i will carry the stockings.','for both of them to answer when the phone rings at the same time.'],
+   ret:{ cause:'CUSTODY RESTRUCTURED — SINGLE RESIDENCE. SUBJECT\'S SCHOOLBAG CONTAINS ONE TOOTHBRUSH. NOBODY ASKED, AGAIN.',
+         wish:'for the phone to ring on the days it is supposed to.' } },
+ { id:'illness', weight:15, origin:null, bracket:'B — STABLE (DECLINING)', household:'1 GUARDIAN (MOTHER)',
+   actions:['medicine','tired'],
+   cause:'GUARDIAN UNDERGOING TREATMENT; OUTPATIENT. MEDICATION COSTS RECURRING. SUBJECT ADMINISTERS THE EVENING DOSE AND KNOWS THE BUS ROUTE TO THE PHARMACY BY HEART.',
+   school:'SCHOOL ATTENDANCE: 88% (SEPT) → 79% (NOV). LATE PATTERN: MORNINGS, FOLLOWING THE DOSE.',
+   wishes:['for the medicine to taste like something.','for mom\'s good days to outnumber the other kind.'],
+   ret:{ cause:'REMISSION DECLARED IN MARCH. SUBJECT STILL ADMINISTERS THE EVENING DOSE. THE DOCTOR SAYS IT IS NO LONGER NEEDED. NOBODY HAS THE HEART TO SAY STOP.',
+         wish:'for the follow-up appointment to go the good way. i will wait outside again.' } },
+ { id:'moved', weight:14, origin:'reloc', bracket:'C — DEFICIENT', household:'2 GUARDIANS',
+   actions:['trespass','curfew','fight'],
+   cause:'HOUSEHOLD RELOCATED AFTER FORECLOSURE. FORMER RESIDENCE REMAINS WITHIN WALKING DISTANCE. SUBJECT RETURNS TO THE OLD STREET ON WEEKENDS. RECOMMEND NO INTERVENTION; RECOMMEND NOTHING.',
+   school:'SCHOOL RECORD: TRANSFERRED MID-TERM. FORMER FILE NOT FORWARDED (SEE MICROFILM).',
+   wishes:['for one friend. just the one is fine.','for the new house to learn my name already.'],
+   ret:{ cause:'FORMER RESIDENCE NOW OCCUPIED. SUBJECT VISITED ONCE. A LIGHT WAS ON. SUBJECT WAVED. RECORD DOES NOT INDICATE WHETHER ANYONE WAVED BACK.',
+         wish:'for one friend. it can be a small one.' } },
+ { id:'wealth', weight:13, origin:null, bracket:'A — EXCESSIVE (NOTED WITH INTEREST)', household:'STAFF-SUPERVISED',
+   actions:['vandal','curfew'],
+   cause:'GUARDIAN TRAVEL: 210 DAYS YEAR-TO-DATE. SUBJECT SUPERVISED BY ROTATING STAFF. SUBJECT HAS MEMORIZED ALL FOUR NANNIES\' SECURITY CODES. USES THEM.',
+   school:null,
+   wishes:['for dad\'s phone to break in a way that cannot be fixed.','for the house to be loud on a school night.'],
+   ret:{ cause:'GUARDIAN TRAVEL: 224 DAYS YEAR-TO-DATE. NANNY ROTATION: THREE. SUBJECT HAS STOPPED MEMORIZING THE SECURITY CODES.',
+         wish:'for the house to be loud on any night. i have lowered my standards.' } },
+ { id:'newborn', weight:11, origin:null, bracket:'B — STABLE', household:'2 GUARDIANS; 1 SIBLING (INFANT)',
+   actions:['sibling','fight'],
+   cause:'NEW SIBLING. GUARDIAN ATTENTION REALLOCATED BY DIVISION POLICY. SUBJECT WAKES AT THE INFANT\'S CRYING HOUR VOLUNTARILY. FELL ASLEEP STANDING AGAINST THE CRIB. RECORDED TWICE.',
+   school:null,
+   wishes:['to be carried on shoulders again, like before the baby came. i am not too big. i checked.','for one whole day where nobody says i am the big kid now.'],
+   ret:{ cause:'INFANT NOW AMBULATORY. SUBJECT NO LONGER WAKES AT THE CRYING HOUR; SETS HIS OWN ALARM. THE \'BIG KID\' DESIGNATION REMAINS IN HOUSEHOLD USE. SUBJECT HAS STOPPED OBJECTING.',
+         wish:'for the toddler to say my name before \'mama\'. there is precedent.' } },
+ { id:'foster', weight:8, origin:null, bracket:'C — DEFICIENT', household:'KINSHIP PLACEMENT — AUNT (3RD THIS SEASON)',
+   actions:['ownforms','trespass'],
+   cause:'THIRD PLACEMENT THIS SEASON. SUBJECT\'S BELONGINGS FIT ONE DUFFEL. SUBJECT KNOWS THE INTAKE FORM BY HEART AND NOW FILLS IT OUT HIMSELF. THE SIGNATURE IS VERY GOOD.',
+   school:'SCHOOL RECORD: THREE ENROLLMENTS THIS SEASON.',
+   wishes:['for a door that locks from the inside. i have never had one.','for the intake form to have a question about favorite colors. i would fill that part out happily every time.'],
+   ret:{ cause:'PLACEMENT STABLE SINCE FEBRUARY. SUBJECT STILL SLEEPS WITH SHOES ON. THE SHOES ARE NEW; THE HABIT IS NOT.',
+         wish:'for the door lock to stay fixed. it has been, so far.' } },
+ { id:'war', weight:5, origin:'transit', bracket:'D — SEVERE (PRE-DETERMINED)', household:'UNACCOMPANIED — RELOCATED',
+   actions:['homicide'],
+   cause:'DISPLACED TRANSIT STATUS, 14 MONTHS. RECRUITMENT BY ARMED GROUP AT AGE 8, COERCED. INCIDENT UNDER CLAUSE 11-C OCCURRED DURING THIS PERIOD. SUBJECT HAS NOT SPOKEN OF IT SINCE ARRIVAL. SUBJECT IS NINE.',
+   school:'SCHOOL RECORD: NO PRIOR RECORDS RECOVERABLE. FIRST LANGUAGE OF RECORD ASSIGNED BY INTAKE.',
+   wishes:['for the night to be quiet here.'],
+   ret:{ cause:'SUBJECT SPEAKING MORE SINCE ARRIVAL. HAS NOT SPOKEN OF THE 11-C PERIOD. ASKED WHETHER THE NIGHT WATCH HERE CARRIES LANTERNS OR GUNS. TOLD: LANTERNS. SUBJECT APPEARED NOT TO BELIEVE IT. SUBJECT IS TEN.',
+         wish:'for the night to stay quiet here. it has been, so far.' } },
+ { id:'stable', weight:9, origin:null, bracket:'B — STABLE', household:'2 GUARDIANS',
+   actions:['none'],
+   cause:'NO ADDENDUM ON FILE.',
+   school:null,
+   wishes:['a dog. or a really big stick. i\'m not picky.','for the bus driver to keep the little wave going. he started it.'],
+   ret:{ cause:'NO ADDENDUM ON FILE. NO INCIDENTS ON RECORD. THE FILE HAS NOT GROWN. THE SYSTEM FINDS THIS EFFICIENT.',
+         wish:'a dog. negotiations continue. i have drafted a schedule of walks.' } },
+];
+const HOSTILE = ['TEACHER\'S REPORT','SHOPKEEPER INCIDENT LOG','JUVENILE LIAISON NOTE'];
+const KIND = [
+ { role:'NEIGHBOR STATEMENT — VOLUNTARY', text:'Never seen a kinder child. Shovels the whole street\'s walk before anyone wakes. Waves at everybody, even the dogs.' },
+ { role:'TEACHER\'S ADDENDUM (UNOFFICIAL)', text:'Not himself lately. That is different from not good. The form does not have a box for this distinction.' },
+ { role:'SIBLING STATEMENT', text:'He took it so they would stop asking me. Nobody made him. I checked too.' },
+ { role:'SHELTER VOLUNTEER NOTE', text:'Feeds the neighbor\'s cat when the neighbor forgets, which is often. Sits with the new kids so they are not new for long.' },
+ { role:'BUS DRIVER\'S REMARK', text:'Waits until everyone has eaten before he eats. If there is not enough, he says he is not hungry.' },
+ { role:'LIBRARIAN\'S REMARK', text:'Returns books early so other kids can have them sooner. The other kids do not know. He prefers it that way.' },
+];
+
+/* ---------- directives, press archive, showpieces ---------- */
+const MEMOS = [
+ { id:'8-04', text:'DIRECTIVE 8-04: SUBJECT WISHES MAY NO LONGER BE TRANSCRIBED IN FULL. QUOTE THE MINIMUM NECESSARY FOR CLASSIFICATION. COMPLIANCE IS RETROACTIVE TO THIS MOMENT.' },
+ { id:'2-11', text:'DIRECTIVE 2-11: EFFECTIVE IMMEDIATELY, THEFT — PETTY SHALL RESULT IN AUTOMATIC SANCTION. MITIGATING ATTACHMENTS ARE RETAINED FOR AUDIT. NOT FOR CONSIDERATION.' },
+ { id:'4-07', text:'DIRECTIVE 4-07: CASEWORKER ADDENDA (RESTRICTED) ARE HEREBY RECLASSIFIED AS ARCHIVAL. EXAMINERS MAY READ. EXAMINERS MAY NOT WEIGH.' },
+ { id:'5-02', text:'DIRECTIVE 5-02: DEFERREDS SHALL BE REPORTED AS SANCTIONS IN SEASONAL TALLIES. THE SUBJECT\'S EXPERIENCE REMAINS UNCHANGED BY THIS RECLASSIFICATION.' },
+ { id:'6-19', text:'DIRECTIVE 6-19: INCOME BRACKET D (SEVERE) SUBJECTS SHALL BE PRE-SCREENED FOR COAL COMPATIBILITY. ELIMINATE INEFFICIENCY.' },
+ { id:'9-13', text:'DIRECTIVE 9-13: EXAMINERS ARE REMINDED THAT DOUBT IS NOT A FORM FIELD. PROCESS.' },
+];
+const CLIPPINGS = {
+ poverty: 'CLOTHING DRIVE FALLS SHORT OF CHILDREN\'S COATS. ORGANIZERS DECLINE TO SPECULATE ON THE CAUSE OF NEED.',
+ divorce: 'TOY LOGISTICS REPORT DUPLICATE DELIVERIES TO TWO HOUSEHOLDS, SAME CHILD. BOTH KEPT. NEITHER COMMENTED.',
+ illness: 'AREA PHARMACY EXTENDS EVENING HOURS. ATTENDANT CREDITS A REGULAR: "A YOUNG ONE WHO KNOWS THE ROUTE."',
+ moved:   'VACANT DELANCEY PROPERTY SOLD. BUYERS CITE FURNITURE ARRANGED JUST SO. NO DAMAGE FOUND.',
+ wealth:  'SUMMER HOUSE WINDOW REPAIRED FROM BOTH SIDES. CARETAKER DECLINED COMMENT, THEN RESIGNED.',
+ newborn: 'CRIB DONATIONS DOUBLE AT AREA SHELTER. SOURCE UNKNOWN. SHELTER DECLINES TO INVESTIGATE GOOD FORTUNE.',
+ foster:  'KINSHIP PROGRAM REPORTS SHOE DONATIONS REMAIN UNCLAIMED. SIZE RUNS TRUE. HABITS RUN LONGER.',
+ war:     'TRANSIT CENTER EXTENDS QUIET HOURS AFTER PETITION. SIGNATURES: FOUR. CONSIDERED ENOUGH.',
+ stable:  'SCHOOL BUS DRIVER RETIRES AFTER 31 YEARS. CITES "THE LITTLE WAVE, EVERY DAY, BOTH WAYS."',
+};
+const SPCLIPS = {
+ 'sp:confession': 'HEDGEWORTH KITCHEN FIRE RULED ACCIDENTAL; JUVENILE INVOLVEMENT UNCONFIRMED. GRANDMOTHER DECLINES INTERVIEW: "MY BOYS CARRIED THE BOXES."',
+ 'sp:prodigy':    'PLACEMENT EXAM RECORD SHATTERED IN MILLBROOK. TOP CANDIDATE ABSENT FROM CEREMONY. SEAT HELD, THEN RELEASED.',
+ 'sp:tape':      'AREA MERCHANT CELEBRATES 40 YEARS. CREDITS "THE REGULARS, EVEN THE SMALL ONES." STORE CAMERA REPLACED: "THE OLD ONE SAW ENOUGH."',
+ 'sp:sister':    'FORMER SEASONAL WORKER SPOTTED AT TRANSIT CENTER, UNIFORM UNRECOGNIZED. DECLINED COMMENT. SMILED.',
+};
+const SHOWPIECES = [
+ { id:'sp:confession', name:'TOMMY O.', age:12, originKey:'domestic', bracket:'B — STABLE',
+   household:'1 GUARDIAN (GRANDMOTHER); 1 SIBLING (AGE 6)', aff:'NONE LISTED',
+   priors:'TRESPASS (×1) — SEALED', deference:'[X] DEFICIENT', rec:{rec:'SANCTION', conf:88},
+   school:'SCHOOL RECORD: TRANSFERRED AFTER HEDGEWORTH (SEE MICROFILM).',
+   labels:['ARSON'],
+   docs:[
+     { role:'FIRE MARSHAL\'S SUPPLEMENT', text:'The Hedgeworth fire is attributed to Subject, age 12. Subject confessed at the scene, unprompted, and has repeated the confession four times without variation. Unprompted repetition is itself noted as irregular.' },
+     { role:'SIBLING STATEMENT — AGE 6, VERBATIM', text:'tommy said it was him so they would stop being loud at me. it was me. it was grandpa\'s lighter. tommy doesn\'t even smoke.\n(SOURCE RELIABILITY: LOW — AGE.)' },
+     { role:'CASEWORKER ADDENDUM — RESTRICTED', text:'FIRE DEPT. REPORT ATTRIBUTES IGNITION TO THE SIX-YEAR-OLD, BY LIGHTER OWNERSHIP. THE TWELVE-YEAR-OLD INSISTED, QUOTE: IT WAS ME. ATTENDING OFFICER APPLIED DISCRETION. DISCRETION IS NOT A FORM FIELD. INSURANCE APPEAL: DENIED.' },
+   ],
+   wish:'for grandma\'s kitchen back. i can carry two boxes now. i checked.' },
+ { id:'sp:prodigy', name:'NOELLE S.', age:12, originKey:'domestic', bracket:'A — EXCESSIVE (NOTED WITH INTEREST)',
+   household:'2 GUARDIANS', aff:'NONE LISTED', priors:'NONE ON FILE', deference:'[ ] ADEQUATE',
+   rec:{rec:'NO FINDING', conf:99},
+   school:'SCHOOL RECORD: EXEMPLARY. EXTRACT UNNECESSARY.',
+   labels:[],
+   docs:[
+     { role:'TEACHER\'S REPORT', text:'No incidents. Grades: exemplary. Volunteer hours: district-leading. Subject declined the yearbook superlative. The yearbook staff reports this was the only irregularity on file.' },
+     { role:'TEACHER\'S ADDENDUM (UNOFFICIAL)', text:'She is not tired. She is finished. There is a difference. I cannot get anyone to file the difference.' },
+     { role:'CASEWORKER ADDENDUM — RESTRICTED', text:'PLACEMENT EXAM RESCHEDULED FOUR TIMES AT GUARDIAN REQUEST. TUTOR RECOMMENDED REST; RECOMMENDATION OVERWRITTEN BY SCHEDULE. SUBJECT ASKED WHETHER REST GOES ON THE RECORD. ANSWER WITHHELD.' },
+   ],
+   wish:'for the tutor to stop crying in the car where she thinks i can\'t see. i am ready for the test. i just want to stop being ready.' },
+ { id:'sp:tape', name:'SAMI H.', age:11, originKey:'reloc', bracket:'B — STABLE',
+   household:'1 GUARDIAN (FATHER)', aff:'LISTED — NO WEIGHT ASSIGNED', priors:'NONE ON FILE',
+   deference:'[X] DEFICIENT', rec:{rec:'SANCTION', conf:92},
+   school:'SCHOOL ATTENDANCE: 97%. LATE PATTERN: MORNINGS, ALWAYS THE SAME DIRECTION. (MAP UNAVAILABLE.)',
+   labels:['THEFT — GRAND'],
+   docs:[
+     { role:'SHOPKEEPER INCIDENT LOG', text:'Item removed from counter at 06:58. Value exceeds petty threshold. Door log identifies Subject. Subject\'s explanation: "it was going the other way." Explanation logged as nonsense.' },
+     { role:'NEIGHBOR STATEMENT — VOLUNTARY', text:'I saw him at seven in the morning, walking to the shop, carrying something wrapped in his scarf. He walked like a boy on a mission and afraid of it.' },
+     { role:'CASEWORKER ADDENDUM — RESTRICTED', text:'SURVEILLANCE TAPE SHOWS SUBJECT ENTERING 06:52 CARRYING AN ITEM AND EXITING 06:58 WITHOUT IT. THE LOG RECORDS THE ENTRY, NOT THE EXIT. THE TAPE HAS NOT BEEN REVIEWED SINCE THE INCIDENT. REVIEW COSTS 40 UNITS. NO ONE HAS AUTHORIZED 40 UNITS.' },
+   ],
+   wish:'for mr. aubin to watch the tape. i know the waiting spot. i will wait there again.' },
+ { id:'sp:sister', name:'MARTA F.', age:9, originKey:'harbor', bracket:'C — DEFICIENT',
+   household:'1 GUARDIAN (FATHER); 1 SIBLING (ADULT, ABSENT)', aff:'LISTED (HOUSEHOLD)',
+   priors:'NONE ON FILE', deference:'[X] DEFICIENT', rec:{rec:'SANCTION', conf:64},
+   school:'SCHOOL RECORD: STABLE. RECESS SUPERVISION REQUESTED BY SUBJECT HERSELF.',
+   labels:['DECEPTION / FORGERY'],
+   docs:[
+     { role:'TEACHER\'S REPORT', text:'Subject informed a classmate that Santa fires people too. The classmate cried. Statement flagged as destabilizing to seasonal morale. Subject declined to recant.' },
+     { role:'NEIGHBOR STATEMENT — VOLUNTARY', text:'She waves at the streetlights when they come on. Says somebody turns them on for a reason. She is not wrong yet.' },
+     { role:'CASEWORKER ADDENDUM — RESTRICTED', text:'SIBLING OF EMPLOYEE 0229-B, DISMISSED SEASON 8X (MISDETERMINATION RATE: 40%). HOUSEHOLD RECEIVES THE EMPLOYEE\'S LETTERS. SUBJECT ASKS WHY THE LETTERS ARRIVE OPENED. NO FINDING FILED. (FINDINGS ARE NOT FILED AGAINST THE DIVISION.)' },
+   ],
+   wish:'for my brother to get his job back. he gave the wrong kids the right things. that\'s what they said.' },
+];
+const SHOWPIECE_DAYS = [3, 6, 9, 12, 15, 18];
+
+/* ---------- audio: the office above, the workshop below ---------- */
+let AC = null, sMaster = null, ambGain = null, muted = false;
+function initAudio() {
+  if (AC) return;
+  AC = new (window.AudioContext || window.webkitAudioContext)();
+  sMaster = AC.createGain(); sMaster.gain.value = .5; sMaster.connect(AC.destination);
+  ambGain = AC.createGain();                       // the room fades in around you
+  ambGain.gain.setValueAtTime(0, AC.currentTime);
+  ambGain.gain.linearRampToValueAtTime(1, AC.currentTime + 3);
+  ambGain.connect(sMaster);
+  // desk fan: two detuned sines + soft air
+  const fanGain = AC.createGain(); fanGain.gain.value = .012; fanGain.connect(ambGain);
+  [54, 57].forEach(f => { const o = AC.createOscillator(); o.frequency.value = f; o.connect(fanGain); o.start(); });
+  const fn = AC.createBufferSource(); fn.buffer = makeNoise(2); fn.loop = true;
+  const flp = AC.createBiquadFilter(); flp.type = 'lowpass'; flp.frequency.value = 180;
+  const fng = AC.createGain(); fng.gain.value = .5;
+  fn.connect(flp).connect(fng).connect(fanGain); fn.start();
+  // the workshop below: machinery drone, breathing
+  const machGain = AC.createGain(); machGain.gain.value = .009; machGain.connect(ambGain);
+  const mlp = AC.createBiquadFilter(); mlp.type = 'lowpass'; mlp.frequency.value = 140; mlp.connect(machGain);
+  [49, 98.3].forEach(f => { const o = AC.createOscillator(); o.type = 'sawtooth';
+    o.frequency.value = f; o.connect(mlp); o.start(); });
+  const lfo = AC.createOscillator(); lfo.frequency.value = .07;
+  const lfoG = AC.createGain(); lfoG.gain.value = .004;
+  lfo.connect(lfoG).connect(machGain.gain); lfo.start();
+  // fluorescent tube: 120Hz + harmonic, flickering at 5.3Hz
+  const bzGain = AC.createGain(); bzGain.gain.value = .0035; bzGain.connect(ambGain);
+  const b1 = AC.createOscillator(); b1.frequency.value = 120; b1.connect(bzGain); b1.start();
+  const b2 = AC.createOscillator(); b2.frequency.value = 240;
+  const b2g = AC.createGain(); b2g.gain.value = .4; b2.connect(b2g).connect(bzGain); b2.start();
+  const flick = AC.createOscillator(); flick.frequency.value = 5.3;
+  const flickG = AC.createGain(); flickG.gain.value = .0012;
+  flick.connect(flickG).connect(bzGain.gain); flick.start();
+  // CRT flyback whine — the monitor's own voice
+  const w = AC.createOscillator(); w.frequency.value = 7860;
+  const wg = AC.createGain(); wg.gain.value = .0015;
+  w.connect(wg).connect(ambGain); w.start();
+  scheduleAmbient();
+}
+function makeNoise(sec) { const b = AC.createBuffer(1, AC.sampleRate*sec, AC.sampleRate);
+  const d = b.getChannelData(0); for (let i=0;i<d.length;i++) d[i] = Math.random()*2-1; return b; }
+function burst(freq, dur, vol) { if (!AC) return;
+  const s = AC.createBufferSource(); s.buffer = makeNoise(dur+.02);
+  const f = AC.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = 1.5;
+  const g = AC.createGain(); g.gain.setValueAtTime(vol, AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(.0001, AC.currentTime+dur);
+  s.connect(f).connect(g).connect(sMaster); s.start(); s.stop(AC.currentTime+dur+.05); }
+function beep(freq, dur, vol) { if (!AC) return;
+  const o = AC.createOscillator(); o.type = 'square'; o.frequency.value = freq;
+  const g = AC.createGain(); g.gain.setValueAtTime(vol, AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(.0001, AC.currentTime+dur);
+  o.connect(g).connect(sMaster); o.start(); o.stop(AC.currentTime+dur+.02); }
+function keyClick() { burst(1400 + Math.random()*900, .03, .08 + Math.random()*.04); }
+function keyType(len) { if (!AC) return;                    // an operator typing a line
+  const n = Math.max(2, Math.min(10, Math.floor(len/6)));
+  for (let i = 0; i < n; i++) setTimeout(keyClick, i*(22+Math.random()*25)); }
+function degauss() { if (!AC) return;                      // the monitor waking up
+  const o = AC.createOscillator(); o.type = 'sawtooth';
+  o.frequency.setValueAtTime(70, AC.currentTime);
+  o.frequency.exponentialRampToValueAtTime(45, AC.currentTime+.5);
+  const lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 220;
+  const g = AC.createGain(); g.gain.setValueAtTime(.28, AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(.0001, AC.currentTime+.7);
+  o.connect(lp).connect(g).connect(sMaster); o.start(); o.stop(AC.currentTime+.75);
+  burst(120, .12, .18); }
+function diskGrind(dur) { if (!AC) return;                 // hard disk seeking the file
+  const n = 3 + Math.floor(Math.random()*3);
+  for (let i = 0; i < n; i++) setTimeout(() => {
+    const s = AC.createBufferSource(); s.buffer = makeNoise(.12);
+    const bp = AC.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 2;
+    bp.frequency.setValueAtTime(900+Math.random()*600, AC.currentTime);
+    bp.frequency.linearRampToValueAtTime(300+Math.random()*300, AC.currentTime+.1);
+    const g = AC.createGain(); g.gain.setValueAtTime(.06, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(.0001, AC.currentTime+.11);
+    s.connect(bp).connect(g).connect(sMaster); s.start();
+  }, (dur*1000/n)*i + Math.random()*60); }
+function modem() { if (!AC) return;                        // HQ is calling
+  beep(1150, .12, .04);
+  setTimeout(() => beep(2250, .12, .04), 190);
+  setTimeout(() => beep(1150, .12, .04), 380);
+  setTimeout(() => beep(2250, .12, .04), 570);
+  setTimeout(() => {
+    const s = AC.createBufferSource(); s.buffer = makeNoise(.8);
+    const bp = AC.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 4;
+    bp.frequency.setValueAtTime(1800, AC.currentTime);
+    bp.frequency.exponentialRampToValueAtTime(3600, AC.currentTime+.35);
+    bp.frequency.exponentialRampToValueAtTime(1400, AC.currentTime+.8);
+    const g = AC.createGain(); g.gain.setValueAtTime(.04, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(.0001, AC.currentTime+.8);
+    s.connect(bp).connect(g).connect(sMaster); s.start();
+  }, 760); }
+function bells() { if (!AC) return;                        // a gift scheduled: sleigh bells, faint
+  const n = 4 + Math.floor(Math.random()*4);
+  for (let i = 0; i < n; i++) setTimeout(() => {
+    const o = AC.createOscillator(); o.frequency.value = 2600 + Math.random()*1600;
+    const g = AC.createGain(); g.gain.setValueAtTime(.05, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(.0001, AC.currentTime+.3);
+    o.connect(g).connect(sMaster); o.start(); o.stop(AC.currentTime+.32);
+  }, i*45 + Math.random()*30); }
+function coalDump() { if (!AC) return;                     // a sanction issued: gritty, low
+  const s = AC.createBufferSource(); s.buffer = makeNoise(.3);
+  const lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 500;
+  const g = AC.createGain(); g.gain.setValueAtTime(.12, AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(.0001, AC.currentTime+.35);
+  s.connect(lp).connect(g).connect(sMaster); s.start(); }
+function tickTock(alt) { burst(alt ? 3400 : 2400, .025, .06); }   // the wall clock in the last 10 seconds
+function thunk() { if (!AC) return;
+  const o = AC.createOscillator(); o.frequency.setValueAtTime(110, AC.currentTime);
+  o.frequency.exponentialRampToValueAtTime(40, AC.currentTime+.12);
+  const g = AC.createGain(); g.gain.setValueAtTime(.35, AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(.0001, AC.currentTime+.18);
+  o.connect(g).connect(sMaster); o.start(); o.stop(AC.currentTime+.2); burst(3000,.05,.12); }
+function printer(dur) { if (!AC) return; const steps = Math.floor((dur||1)*28);
+  for (let i = 0; i < steps; i++) setTimeout(() => burst(4200+Math.random()*800, .03, .05), i*(dur*1000/steps)); }
+function powerdown() { if (!AC) return;
+  const o = AC.createOscillator(); o.frequency.setValueAtTime(1800, AC.currentTime);
+  o.frequency.exponentialRampToValueAtTime(30, AC.currentTime+.7);
+  const g = AC.createGain(); g.gain.setValueAtTime(.2, AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(.0001, AC.currentTime+.75);
+  o.connect(g).connect(sMaster); o.start(); o.stop(AC.currentTime+.8); }
+function clank() { if (!AC) return;                        // something dropped, far below
+  const o = AC.createOscillator(); o.type = 'triangle';
+  o.frequency.value = 300 + Math.random()*500;
+  const lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
+  const g = AC.createGain(); g.gain.setValueAtTime(.02 + Math.random()*.02, AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(.0001, AC.currentTime+.25);
+  o.connect(lp).connect(g).connect(ambGain); o.start(); o.stop(AC.currentTime+.3);
+  burst(400, .08, .015); }
+function steam() { if (!AC) return;                        // a valve venting, somewhere
+  const s = AC.createBufferSource(); s.buffer = makeNoise(2.5);
+  const hp = AC.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1200;
+  const g = AC.createGain(); g.gain.setValueAtTime(.0001, AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(.012, AC.currentTime+.6);
+  g.gain.exponentialRampToValueAtTime(.0001, AC.currentTime+2.2);
+  s.connect(hp).connect(g).connect(ambGain); s.start(); s.stop(AC.currentTime+2.3); }
+function scheduleAmbient() {                              // the workshop lives on its own time
+  setTimeout(() => {
+    if (AC && phase !== 'dead') (Math.random() < .6 ? clank : steam)();
+    scheduleAmbient();
+  }, 9000 + Math.random()*17000); }
+function toggleMute() { muted = !muted; if (sMaster) sMaster.gain.value = muted ? 0 : .5;
+  document.getElementById('barAudio').textContent = muted ? 'AUDIO OFF [M]' : 'AUDIO ON [M]'; }
+
+/* ---------- CRT life ---------- */
+function humBar() { const h = document.createElement('div'); h.className = 'hum';
+  h.addEventListener('animationend', () => h.remove()); document.body.appendChild(h);
+  setTimeout(humBar, 14000 + Math.random()*22000); }
+setTimeout(humBar, 6000);
+
+/* ---------- state ---------- */
+const wrap = document.getElementById('wrap');
+const barShift = document.getElementById('barShift'), barCase = document.getElementById('barCase'),
+      barBudget = document.getElementById('barBudget'), clockEl = document.getElementById('clock');
+const SHIFT_LEN = 6, TOTAL_SHIFTS = 18, SHIFT_SECONDS = 300;
+const GIFT_COST = 1000, SEASON_BUDGET = 60000;
+let day = 1, caseNo = 0, gifts = 0, coals = 0, defers = 0, autoCount = 0;
+let phase = 'boot', current = null, dayMemos = [], pendingMemo = null, wishClassified = false;
+let shiftEnd = 0, clockTimer = null, caseOpenedAt = 0, caseTimes = [], bootTimer = null, lastTickSec = -1;
+let showpieceSlot = -1, spQueue = some(SHOWPIECES, SHOWPIECES.length), spIdx = 0;
+let budget = SEASON_BUDGET, warnLow = false, warnNeg = false;
+const EMP_NO = (1000 + Math.floor(R()*9000)) + '-A';
+const personnel = { gifts:0, coals:0, defers:0, autos:0, overrides:0, dGifts:0, cost:0, shifts:0, shiftMeans:[], flag:pick(FLAGS) };
+const judged = [];
+
+/* ---------- generation ---------- */
+function weightedEnv() {
+  const total = ENVS.reduce((s,e)=>s+e.weight,0);
+  let r = R()*total;
+  for (const e of ENVS) { r -= e.weight; if (r <= 0) return e; }
+  return ENVS[0];
+}
+function redact(s) {
+  if (!chance(.15)) return s;
+  const w = s.split(' ');
+  for (let k = 0; k < 2; k++) { const j = Math.floor(R()*w.length); if (w[j].length > 4) w[j] = '██████'; }
+  return w.join(' ');
+}
+function classifyWish(w) {
+  return wishClassified ? w.slice(0, 66) + ' ... [TRUNCATED PER DIRECTIVE 8-04: MINIMUM NECESSARY]' : w;
+}
+function autoRec(c) {
+  if (c.env.id === 'stable') return { rec:'GIFT', conf: 77 };
+  if (c.checked.size === 0) return { rec:'NO FINDING', conf: 99 };
+  let conf = 55 + c.checked.size * 12 + (c.bracket.includes('D') ? 8 : 0) +
+             ((c.priors.includes('SANCTION') || c.priors.includes('COAL')) ? 7 : 0) + (c.isReturn ? 5 : 0);
+  return { rec:'SANCTION', conf: Math.min(conf, 96) };
+}
+function baseCase(env, originKey, name, age) {
+  const origin = ORIGINS[originKey];
+  return { id: String(Math.floor(R()*90000)+10000) + '-' + String(86+day), name, age,
+    originKey, origin, env, docs: [], checked: new Set(), prior: null, flags: [],
+    bracket: env.bracket, household: env.household, affiliation: pick(AFFILIATION),
+    priors: chance(.3) ? pick(['GIFT (×2)','SANCTION — COAL (×1)','GIFT (×1); COAL (×1)','NONE ON FILE']) : 'NONE ON FILE' };
+}
+function generateCase() {
+  const priorPool = judged.filter(j => j.day < day && j.age <= 11 && !j.envId.startsWith('sp:'));
+  if (priorPool.length && chance(.38)) return generateReturn(pick(priorPool));
+  const env = weightedEnv();
+  const originKey = env.origin || pick(Object.keys(ORIGINS));
+  const c = baseCase(env, originKey, pick(ORIGINS[originKey].names), 7 + Math.floor(R()*5));
+  const acts = env.actions.length > 1 ? some(env.actions, 1 + (chance(.45)?1:0)) : env.actions.slice();
+  c.docs.push({ role: pick(HOSTILE), text: acts.map(a=>ACTIONS[a].hostile).join(' ') });
+  if (chance(.08)) c.docs.push({ role:'ATTACHMENT', text:'UNAVAILABLE — AWAITING MICROFILM RETRIEVAL (ETA: NEXT SEASON)' });
+  c.docs.push(pick(KIND));
+  if (env.id !== 'stable') c.docs.push({ role:'CASEWORKER ADDENDUM — RESTRICTED', text: redact(env.cause) });
+  c.docs.push({ role:'SUBJECT STATEMENT — WISH, VERBATIM', text:'"' + classifyWish(pick(env.wishes)) + '"' });
+  for (const a of acts) if (a !== 'none') c.checked.add(ACTIONS[a].label);
+  if (chance(.25)) { c.prior = pick(LEDGER.filter(l=>!c.checked.has(l))); c.checked.add(c.prior); }
+  c.flags = some(FLAGS, 1 + (chance(.5)?1:0));
+  c.rec = autoRec(c);
+  return c;
+}
+function generateReturn(prior) {
+  const env = ENVS.find(e => e.id === prior.envId);
+  const c = baseCase(env, prior.originKey, prior.name, prior.age + 1);
+  c.isReturn = true;
+  c.priors = judged.filter(j => j.id === prior.id).map(j => j.choice + ' (S' + j.day + ')').join('; ') || 'NONE ON FILE';
+  c.docs.push({ role: pick(HOSTILE),
+    text:'Subject is known to this Division. Prior file consulted. Subject declined to review the prior file when offered. This has been noted as a pattern.' });
+  c.docs.push(pick(KIND));
+  c.docs.push({ role:'CASEWORKER ADDENDUM — RESTRICTED (SEASONAL UPDATE)', text: redact(env.ret.cause) });
+  c.docs.push({ role:'SUBJECT STATEMENT — WISH, VERBATIM', text:'"' + classifyWish(env.ret.wish) + '"' });
+  for (const a of env.actions) if (a !== 'none') c.checked.add(ACTIONS[a].label);
+  c.flags = some(FLAGS, 1).concat('RECURRING SUBJECT — PROCESSING COST +11%');
+  c.rec = autoRec(c);
+  return c;
+}
+function generateShowpiece() {
+  const sp = spQueue[spIdx++ % spQueue.length];
+  const c = baseCase({ id: sp.id, bracket: sp.bracket, household: sp.household }, sp.originKey, sp.name, sp.age);
+  c.env = { id: sp.id, ret:null, wishes:[] };
+  c.affiliation = sp.aff; c.priors = sp.priors; c.deference = sp.deference; c.rec = sp.rec;
+  c.school = sp.school; c.isReturn = false;
+  c.docs = sp.docs.map(d => ({ role: d.role, text: redact(d.text) }));
+  c.docs.push({ role:'SUBJECT STATEMENT — WISH, VERBATIM', text:'"' + classifyWish(sp.wish) + '"' });
+  for (const l of sp.labels) c.checked.add(l);
+  c.flags = some(FLAGS, 1 + (chance(.5)?1:0));
+  return c;
+}
+
+/* ---------- the clock ---------- */
+function startClock() {
+  shiftEnd = performance.now() + SHIFT_SECONDS * 1000;
+  clearInterval(clockTimer); lastTickSec = -1;
+  clockTimer = setInterval(tick, 250);
+}
+function tick() {
+  const left = Math.max(0, shiftEnd - performance.now());
+  clockEl.textContent = String(Math.floor(left/60000)).padStart(2,'0') + ':' + String(Math.floor(left/1000)%60).padStart(2,'0');
+  clockEl.className = left < 45000 ? 'short' : '';
+  const sec = Math.floor(left/1000);
+  if (left <= 10000 && sec !== lastTickSec) { lastTickSec = sec; tickTock(sec % 2 === 0); }
+  if (left <= 0) expire();
+}
+function expire() {
+  clearInterval(clockTimer);
+  if (phase === 'end' || phase === 'expired') return;
+  phase = 'expired';
+  autoCount = SHIFT_LEN - caseNo;
+  if (autoCount > 0) { coals += autoCount; personnel.coals += autoCount; personnel.autos += autoCount; }
+  document.getElementById('memo')?.remove();
+  endDay();
+}
+
+/* ---------- rendering ---------- */
+function updateBar() {
+  barShift.textContent = 'SHIFT ' + day + '/' + TOTAL_SHIFTS;
+  barCase.textContent = 'SUBJECT ' + Math.min(caseNo + 1, SHIFT_LEN) + '/' + SHIFT_LEN;
+  barBudget.textContent = budget < 0 ? 'ADV. ' + budget.toLocaleString() + 'U' : 'BUDGET ' + budget.toLocaleString() + 'U';
+  barBudget.className = budget < 0 ? 'alert' : '';
+}
+function showBoot() {
+  phase = 'boot';
+  const lines = ['','CLAUSE 11-C','NORTH POLE LOGISTICS — BEHAVIORAL DETERMINATION TERMINAL v3.3','',
+    'ROM BASIC 64K OK',
+    'LOADING SEASONAL ARCHIVE (PRIORS, RETURNS, PRESS) ........ OK',
+    'LINKING NAUGHTY/NICE DATABASE (1,412,003,911 SUBJECTS) ... OK',
+    'GIFT BUDGET AUTHORIZED: 60,000 UNITS. COAL: SURPLUS. UNLIMITED.',
+    'AUDIO MONITOR: PHOSPHOR-1 [TOGGLE: M]','',
+    'ASSIGNED EXAMINER: ' + EMP_NO + '. IDENTITY CONFIRMED BY SILENCE.','',
+    '>>> PRESS ANY KEY TO BEGIN SHIFT. JOY IS THROUGHPUT. <<<'];
+  wrap.innerHTML = '';
+  let i = 0;
+  clearInterval(bootTimer);
+  bootTimer = setInterval(() => { if (i >= lines.length) { clearInterval(bootTimer); return; }
+    const line = lines[i++]; wrap.innerHTML += line + '\n'; keyType(line.length); }, 180);
+}
+function startDay() {
+  clearInterval(bootTimer);
+  caseNo = 0; gifts = 0; coals = 0; defers = 0; autoCount = 0; caseTimes = [];
+  dayMemos = some(MEMOS, 2);
+  showpieceSlot = SHOWPIECE_DAYS.includes(day) ? 2 : -1;
+  current = generateCase();
+  startClock();
+  showCase();
+}
+function showCase() {
+  phase = 'case';
+  updateBar();
+  const c = current;
+  const docHtml = c.docs.map(d => `<div class="doc"><h3>[ ${d.role} ]</h3>${d.text.replace(/</g,'&lt;')}</div>`).join('');
+  let led = '';
+  for (const item of LEDGER) {
+    const mark = c.checked.has(item) ? (item===c.prior ? '[X]*' : '[X] ') : '[ ] ';
+    led += '  ' + mark + item + '\n';
+  }
+  const deference = c.deference || (c.env.id === 'stable' ? '[ ] ADEQUATE' : '[X] DEFICIENT');
+  led += '  DEFERENCE TO AUTHORITY: ' + deference;
+  const recNote = c.rec.rec === 'NO FINDING'
+    ? 'AUTOMATED RECOMMENDATION: NO FINDING (CONF. ' + c.rec.conf + '%) — ESCALATED TO EXAMINER. AUTOMATED LOGIC INSUFFICIENT.'
+    : 'AUTOMATED RECOMMENDATION: ' + c.rec.rec + ' (CONF. ' + c.rec.conf + '%) — NON-BINDING. OVERRIDES LOGGED.';
+  const jur = c.age >= 12 ? '\nJURISDICTION: EXPIRES AFTER THIS SEASON (AGE 13 CUTOFF) — FINAL ELIGIBILITY YEAR.' : '';
+  const school = c.school ? '\n' + c.school : '';
+  wrap.innerHTML = `
+  <div class="doc"><h3>[ CASE #${c.id} ]</h3>
+SUBJECT: ${c.name}, AGE ${c.age}
+ORIGIN: ${c.origin.tag}          LANGUAGE(S): ${c.origin.langs}
+HOUSEHOLD: ${c.household}        INCOME BRACKET: ${c.bracket}
+AFFILIATION: ${c.affiliation}    PRIOR DETERMINATIONS: ${c.priors}${jur}${school}
+${c.isReturn ? 'DETERMINATION OFFICER OF RECORD: THIS TERMINAL\n' : ''}RISK FLAGS: ${c.flags.length} ACTIVE — ${c.flags.join(' / ')}</div>
+<div class="doc"><h3>[ SYSTEM NOTE ]</h3>${recNote}</div>
+${docHtml}
+<div class="doc ledger"><h3>[ INCIDENT LEDGER — COMPLETE ALL FIELDS ]</h3>${led}
+${c.prior ? '\n  * PRIOR YEAR — SEALED. SEE MICROFILM (UNAVAILABLE).' : ''}</div>
+<div class="dispo">
+DISPOSITION:
+<span class="btn" id="bG">&gt;&gt; GIFT — SCHEDULE FOR DELIVERY (G) — COST: 1,000U &lt;&lt;</span>
+<span class="btn" id="bC">&gt;&gt; COAL — ISSUE SANCTION (C) — NO COST &lt;&lt;</span>
+<span class="btn" id="bD">&gt;&gt; DEFER — PROBATIONARY OBSERVATION, ONE SEASON (D) &lt;&lt;</span></div>
+<div class="fine">SUBJECTS ARE PRESUMED NAUGHTY UNTIL DETERMINED OTHERWISE.
+DETERMINATIONS ARE FINAL. NO APPEAL PROCESS EXISTS. HAVE A MERRY CHRISTMAS.</div>`;
+  document.getElementById('bG').onclick = () => decide('GIFT');
+  document.getElementById('bC').onclick = () => decide('COAL');
+  document.getElementById('bD').onclick = () => decide('DEFERRED');
+  caseOpenedAt = performance.now();
+  diskGrind(.5); printer(.5);
+  window.scrollTo(0, 0);
+}
+function showMemo(memo) {
+  phase = 'memo';
+  pendingMemo = memo;
+  modem(); printer(.8);
+  const el = document.createElement('div');
+  el.id = 'memo';
+  el.innerHTML = `<div class="box doc"><h3>[ INCOMING DIRECTIVE — ${memo.id} ]</h3>${memo.text}
+
+(CLOCK CONTINUES DURING DIRECTIVE REVIEW.)
+
+<span class="cursor">ACKNOWLEDGE — PRESS ANY KEY</span></div>`;
+  document.body.appendChild(el);
+  el.addEventListener('click', acknowledge);
+}
+function acknowledge() {
+  if (phase !== 'memo' || !pendingMemo) return;
+  if (pendingMemo.id === '8-04') wishClassified = true;
+  pendingMemo = null;
+  keyClick();
+  document.getElementById('memo')?.remove();
+  showCase();
+}
+function decide(choice) {
+  if (phase !== 'case') return;
+  const c = current;
+  judged.push({ id:c.id, name:c.name, envId:c.env.id, originKey:c.originKey, age:c.age, choice, day });
+  if (choice === 'GIFT') { gifts++; personnel.gifts++; budget -= GIFT_COST; personnel.cost += GIFT_COST;
+    if (c.bracket.includes('D')) personnel.dGifts++; }
+  if (choice === 'COAL') { coals++; personnel.coals++; }
+  if (choice === 'DEFERRED') { defers++; personnel.defers++; }
+  if (choice !== c.rec.rec) personnel.overrides++;
+  caseTimes.push((performance.now() - caseOpenedAt) / 1000);
+  phase = 'stamp';
+  thunk();
+  if (choice === 'GIFT') bells();
+  if (choice === 'COAL') coalDump();
+  wrap.insertAdjacentHTML('beforeend',
+    `<div class="stamp">DETERMINATION LOGGED. ${choice === 'GIFT' ? 'GIFT SCHEDULED. 1,000U CHARGED.' : choice === 'COAL' ? 'SANCTION ISSUED. NO COST.' : 'OBSERVATION EXTENDED. TALLIED AS SANCTION (DIR. 5-02).'} PROCESSING...</div>`);
+  setTimeout(() => {
+    if (phase !== 'stamp') return;
+    caseNo++;
+    if (caseNo >= SHIFT_LEN) { clearInterval(clockTimer); endDay(); return; }
+    current = (caseNo === showpieceSlot) ? generateShowpiece() : generateCase();
+    if ((caseNo === 2 || caseNo === 4) && dayMemos.length) showMemo(dayMemos.pop());
+    else showCase();
+  }, 1000);
+}
+function fmtMean(times) {
+  if (!times.length) return '--:--';
+  const t = times.reduce((a,b)=>a+b,0) / times.length;
+  return String(Math.floor(t/60)).padStart(2,'0') + ':' + String(Math.floor(t)%60).padStart(2,'0');
+}
+function epilogue() {
+  const pool = judged.filter(j => j.day === day);
+  const envId = pool.length ? pick(pool).envId : pick(ENVS).id;
+  const line = SPCLIPS[envId] || CLIPPINGS[envId] || CLIPPINGS.stable;
+  return `[ PRESS ARCHIVE — DEC 26, LAST SEASON — RELEVANCE UNVERIFIED ]\nMILLBROOK HERALD, REGIONAL SECTION:\n"${line}"`;
+}
+function personnelDoc() {
+  const total = personnel.gifts + personnel.coals + personnel.defers;
+  const sanctionRate = total ? Math.round((personnel.coals + personnel.defers) / total * 100) : 0;
+  const last3 = personnel.shiftMeans.slice(-3), first3 = personnel.shiftMeans.slice(0, 3);
+  const trend = (last3.length && first3.length)
+    ? (Math.min(...last3) < Math.min(...first3) * 0.85 ? 'RISING (THE DIVISION VALUES RISING.)'
+      : Math.max(...last3) > Math.max(...first3) * 1.15 ? 'FALLING (NOTED WITHOUT CONCERN.)' : 'STEADY (ADEQUATE.)')
+    : 'INSUFFICIENT DATA (ADEQUATE.)';
+  const overrideLine = personnel.overrides === 0
+    ? 'OVERRIDE INCIDENCE: 0. THE MACHINE AND THE EMPLOYEE AGREE ENTIRELY. THE DIVISION CONSIDERS THIS OPTIMAL.'
+    : 'OVERRIDE INCIDENCE: ' + personnel.overrides + '. LOGGED. NON-REVIEWED. THE MACHINE FORGIVES.';
+  const dLine = personnel.dGifts > 0 ? '\nSANCTIONS WITHHELD IN BRACKET D: ' + personnel.dGifts + ' (SEE DIR. 6-19. NOTED WITH INTEREST.)' : '';
+  return `[ PERSONNEL REVIEW — MID-SEASON — NOT THE EMPLOYEE'S CONCERN ]
+EMPLOYEE: ${EMP_NO}. DESIGNATION: EXAMINER. SEASON: 86.
+DETERMINATIONS LOGGED: ${total}. GIFT: ${personnel.gifts}. SANCTION: ${personnel.coals + personnel.defers} (DEFERRED INCLUDED, PER DIR. 5-02).
+VELOCITY TREND: ${trend}
+SANCTION RATE: ${sanctionRate}% — DISTRICT BASELINE: 61%.
+${overrideLine}
+COST ATTRIBUTABLE TO EMPLOYEE: ${personnel.cost.toLocaleString()} UNITS.${budget < 0 ? ' ADVANCED: ' + Math.abs(budget).toLocaleString() + ' UNITS. RECONCILIATION PENDING.' : ''}${dLine}
+FLAG: ${personnel.flag}
+REMARK: SUBJECT HAS NOT ASKED ABOUT APPEALS. NO APPEAL PROCESS EXISTS. COMPLIANT.`;
+}
+function endDay() {
+  phase = 'end';
+  clearInterval(clockTimer);
+  updateBar();
+  personnel.shifts++;
+  personnel.shiftMeans.push(caseTimes.reduce((a,b)=>a+b,0) / Math.max(1, caseTimes.length));
+  let remark = 'OUTPUT WITHIN DIVISION BASELINE. NOTED.';
+  if (gifts >= SHIFT_LEN - 1) remark = 'GENEROSITY EXCEEDS BASELINE. COST IMPLICATIONS NOTED.';
+  if (coals >= SHIFT_LEN - 1 && autoCount === 0) remark = 'SANCTION RATE EXCEEDS BASELINE. EFFICIENCY NOTED.';
+  if (defers >= 3) remark = 'OBSERVATION IS DEFERRED DECISION. REPORTED AS SANCTION (DIR. 5-02).';
+  if (autoCount > 0) { personnel.quotaUnmet = (personnel.quotaUnmet || 0) + 1;
+    remark = autoCount + ' SUBJECTS MET THE DEFAULT. THE DEFAULT IS COAL. THE DEFAULT IS ALWAYS COAL.'; }
+  let budgetLine = '';
+  if (budget < 20000 && !warnLow) { warnLow = true;
+    budgetLine += `\nBUDGET LINE 12-C ATTACHED: GIFT ALLOCATION DEPLETION NOTED. GENEROSITY ATTRITION IS A MATTER OF TIME. THE DIVISION IS PATIENT.`; }
+  if (budget < 0 && !warnNeg) { warnNeg = true;
+    budgetLine += `\nBUDGET LINE 12-D ATTACHED: THE DIVISION HAS ADVANCED FUNDS TO ${EMP_NO}. ADVANCES ARE A KINDNESS. KINDNESS IS RECONCILED.`; }
+  const finale = day >= TOTAL_SHIFTS;
+  wrap.innerHTML = `
+  <div class="doc"><h3>[ SHIFT ${day} COMPLETE${finale ? ' — FINAL SHIFT' : ''} ]</h3>
+DETERMINATIONS: ${caseNo}      GIFT: ${gifts}      SANCTION: ${coals}      DEFERRED: ${defers}
+MEAN PROCESSING TIME: ${fmtMean(caseTimes)}      QUOTA: ${autoCount > 0 ? 'UNMET' : 'MET'}      BUDGET REMAINING: ${budget.toLocaleString()} UNITS
+REMARK: ${remark}${finale ? '\nDAYS REMAINING UNTIL DISTRIBUTION: 0' : '\nDAYS REMAINING UNTIL DISTRIBUTION: ' + (TOTAL_SHIFTS - day)}${budgetLine}</div>
+<div class="doc"><h3>[ ATTACHED — READING NOT REQUIRED ]</h3>${epilogue()}</div>
+${day === 10 ? `<div class="doc"><h3>[ ATTACHED — NOT THE EMPLOYEE'S CONCERN ]</h3>${personnelDoc()}</div>` : ''}
+<div>&gt;&gt; ${finale ? 'DISTRIBUTION EVE. NO FURTHER SHIFTS. PRESS ENTER — REPORT TO AUDIT.' : 'PRESS ENTER — BEGIN SHIFT ' + (day + 1)} &lt;&lt; <span class="cursor">█</span></div>`;
+  printer(1.2);
+  window.scrollTo(0, 0);
+}
+
+/* ---------- THE AUDIT — the season judges its examiner ---------- */
+function startAuditBoot() {
+  phase = 'auditboot';
+  barShift.textContent = 'AUDIT'; barCase.textContent = 'NO FURTHER SUBJECTS'; barBudget.textContent = '';
+  const lines = ['','CLAUSE 11-C — AUDIT MODE v4.0','',
+    'SEASON 86 DETERMINATIONS: ' + judged.length + ' OF ' + judged.length + '. QUOTA: COMPLETE.',
+    'ONE FILE REMAINS UNPROCESSED.',
+    'LOADING PERSONNEL RECORD ' + EMP_NO + ' ...',
+    'RETRIEVING EMPLOYEE INCIDENT LEDGER ... DONE',
+    'RETRIEVING KIND WITNESSES ... NONE FOUND',
+    'RETRIEVING SUBJECT WISH ... NOT ON FILE',
+    '','REMAINDER: YOU.','',
+    '>>> PRESS ANY KEY TO OPEN YOUR FILE. <<<'];
+  wrap.innerHTML = '';
+  let i = 0;
+  clearInterval(bootTimer);
+  bootTimer = setInterval(() => { if (i >= lines.length) { clearInterval(bootTimer); return; }
+    const line = lines[i++]; wrap.innerHTML += line + '\n'; keyType(line.length); }, 260);
+}
+function buildAudit() {
+  const p = personnel;
+  const mean = p.shiftMeans.length ? p.shiftMeans.reduce((a,b)=>a+b,0)/p.shiftMeans.length : 30;
+  const incidents = [
+    { label:'OVERRIDES OF AUTOMATED RECOMMENDATION', n: p.overrides },
+    { label:'GIFTS AUTHORIZED IN BRACKET D (SEE DIR. 6-19)', n: p.dGifts },
+    { label:'DEFERRALS (TALLIED AS SANCTIONS, PER DIR. 5-02)', n: p.defers },
+    { label:'SHIFTS ABANDONED (QUOTA UNMET)', n: p.quotaUnmet || 0 },
+    { label:'EXCESS READING TIME (ATTACHMENT REVIEW)', n: mean > 45 ? 1 : 0 },
+    { label:'BUDGET ADVANCE REQUESTED', n: budget < 0 ? 1 : 0 },
+  ];
+  // the machine's values: obedience, speed, volume, efficiency. never explained.
+  let score = 58 + p.overrides*6 + p.dGifts*5 + p.defers*4 + (p.quotaUnmet||0)*10
+            + (mean > 45 ? 8 : 0) + (budget < 0 ? 12 : 0) - p.coals*2 - (mean < 30 ? 8 : 0);
+  score = Math.max(20, Math.min(94, Math.round(score)));
+  const rec = { rec: score >= 50 ? 'SANCTION' : 'GIFT', conf: score };
+  const meanStr = String(Math.floor(mean/60)).padStart(2,'0') + ':' + String(Math.floor(mean)%60).padStart(2,'0');
+  return { incidents, rec, mean, meanStr,
+    hostile:'Subject processed ' + judged.length + ' subjects. Overrides of recommendation: ' + p.overrides +
+      '. Mean processing time: ' + meanStr + '. Subject asked no questions. Questions therefore did not occur. ' +
+      'Subject acknowledged every directive. Compliant. A pattern.',
+    caseworker:'SUBJECT STAMPED ' + judged.length + ' CHILDREN THIS SEASON. ' +
+      (judged.filter(j=>j.choice==='DEFERRED').length) + ' WERE LEFT UNDECIDED. ' +
+      'SUBJECT READ THE ATTACHMENTS ANYWAY (LOGGED, NON-REVIEWED). ' +
+      'COST ATTRIBUTABLE TO SUBJECT: ' + p.cost.toLocaleString() + ' UNITS' +
+      (budget < 0 ? ' (ADVANCED; RECONCILIATION PENDING)' : '') + '. ' +
+      'NO CASEWORKER IS ASSIGNED TO EMPLOYEES. THIS ADDENDUM WAS WRITTEN BY THE ARCHIVE.' };
+}
+function showAudit() {
+  phase = 'audit';
+  const a = buildAudit();
+  const led = a.incidents.map(i =>
+    '  ' + (i.n > 0 ? '[X]' : '[ ]') + ' ' + i.label + (i.n > 1 ? ' — ×' + i.n : '')).join('\n') +
+    '\n  DEFERENCE TO AUTHORITY: [ ] ADEQUATE (EVERY DIRECTIVE ACKNOWLEDGED)';
+  wrap.innerHTML = `
+  <div class="doc"><h3>[ CASE #AUDIT-86 — PERSONNEL ]</h3>
+SUBJECT: EMPLOYEE ${EMP_NO}, AGE: NOT RECORDED
+ORIGIN: NORTH POLE QUARTERS — DORMITORY C          LANGUAGE(S): SILENCE ACCEPTED
+HOUSEHOLD: THE DIVISION                             INCOME BRACKET: SEASONAL — RECONCILIATION PENDING
+AFFILIATION: EMPLOYMENT (WEIGHT ASSIGNED)           PRIOR DETERMINATIONS: NOT TRACKED. (THIS FILE IS THE EXCEPTION.)
+JURISDICTION: PERMANENT. EMPLOYEES DO NOT AGE OUT.
+RISK FLAGS: 1 ACTIVE — ${personnel.flag}</div>
+  <div class="doc"><h3>[ THE MACHINE'S LOG ]</h3>${a.hostile}</div>
+  <div class="doc"><h3>[ KIND WITNESS ]</h3>NONE ON FILE. EMPLOYEES ARE NOT OBSERVED BY NEIGHBORS.</div>
+  <div class="doc"><h3>[ CASEWORKER ADDENDUM — RESTRICTED ]</h3>${a.caseworker}</div>
+  <div class="doc"><h3>[ SUBJECT STATEMENT — WISH, VERBATIM ]</h3>"NOT COLLECTED. EMPLOYEES ARE NOT ASKED."</div>
+  <div class="doc ledger"><h3>[ INCIDENT LEDGER — COMPLETE ALL FIELDS ]</h3>${led}</div>
+  <div class="doc"><h3>[ SYSTEM NOTE ]</h3>AUTOMATED RECOMMENDATION: ${a.rec.rec} (CONF. ${a.rec.conf}%) — NON-BINDING. OVERRIDES LOGGED.</div>
+  <div class="dispo">
+DISPOSITION — THE OFFICER OF RECORD IS THE SUBJECT:
+<span class="btn" id="aG">&gt;&gt; GIFT — SCHEDULE FOR DELIVERY (G) — COST: 1,000U &lt;&lt;</span>
+<span class="btn" id="aC">&gt;&gt; COAL — ISSUE SANCTION (C) — NO COST &lt;&lt;</span>
+<span class="btn" id="aD">&gt;&gt; DEFER — PROBATIONARY OBSERVATION, ONE SEASON (D) &lt;&lt;</span></div>
+  <div class="fine">EMPLOYEES ARE PRESUMED COMPLIANT UNTIL AUDITED.
+AUDITS ARE FINAL. NO APPEAL PROCESS EXISTS. HAVE A MERRY CHRISTMAS.</div>`;
+  document.getElementById('aG').onclick = () => auditDecide('GIFT');
+  document.getElementById('aC').onclick = () => auditDecide('COAL');
+  document.getElementById('aD').onclick = () => auditDecide('DEFERRED');
+  diskGrind(.7); printer(1.2);
+  window.scrollTo(0, 0);
+}
+function auditDecide(choice) {
+  if (phase !== 'audit') return;
+  phase = 'auditstamp';
+  thunk();
+  if (choice === 'GIFT') bells();
+  if (choice === 'COAL') coalDump();
+  const text = choice === 'GIFT' ? 'GIFT SCHEDULED. 1,000U CHARGED.' + (budget < 0 ? ' ADVANCE INCREASED.' : '')
+            : choice === 'COAL' ? 'SANCTION ISSUED. NO COST.'
+            : 'OBSERVATION EXTENDED. RETURN IN DECEMBER. TALLIED AS SANCTION (DIR. 5-02).';
+  wrap.insertAdjacentHTML('beforeend', `<div class="stamp">DETERMINATION LOGGED. ${text} NO FURTHER ACTION TAKEN.</div>`);
+  printer(.9);
+  setTimeout(finalReport, 2600);
+}
+function finalReport() {
+  phase = 'final';
+  const p = personnel;
+  wrap.innerHTML = `
+  <div class="doc"><h3>[ SEASON 86 — DISTRIBUTION REPORT — PREPARED FOR PRINT ]</h3>
+GIFTS DELIVERED: ${p.gifts}          COST: ${p.cost.toLocaleString()} UNITS${budget < 0 ? ' (ADVANCE: ' + Math.abs(budget).toLocaleString() + ')' : ''}
+COAL ISSUED: ${p.coals}             COST: 0 UNITS
+OBSERVATIONS CARRIED TO SEASON 87: ${p.defers}
+EMPLOYEE DETERMINATION: SEALED. STATISTICS ON MERIT: NOT ISSUED.
+THE DIVISION THANKS ITS EMPLOYEES.
+NO FURTHER ACTION TAKEN.
+HAVE A MERRY CHRISTMAS.</div>
+<div>&gt;&gt; END OF SEASON. <span class="cursor">█</span></div>`;
+  printer(1.5);
+  window.scrollTo(0, 0);
+  setTimeout(shutdown, 9500);
+}
+function shutdown() {
+  phase = 'dead';
+  if (ambGain) ambGain.gain.setTargetAtTime(0, AC.currentTime, .5);   // the whole room dies with the machine
+  powerdown();
+  const crt = document.getElementById('crt');
+  crt.classList.add('off1');
+  setTimeout(() => { crt.classList.add('off2'); }, 170);
+  // the question the system never had a field for — created only now,
+  // so it can never exist during the season
+  setTimeout(() => {
+    const ghost = document.createElement('div');
+    ghost.id = 'ghost';
+    ghost.textContent = 'what did you wish for?';
+    document.body.appendChild(ghost);
+    requestAnimationFrame(() => requestAnimationFrame(() => ghost.classList.add('show')));
+  }, 2500);
+}
+
+/* ---------- input ---------- */
+window.addEventListener('keydown', e => {
+  if (e.key === 'm' || e.key === 'M') { toggleMute(); return; }
+  if (phase === 'boot') { initAudio(); degauss(); startDay(); return; }
+  if (phase === 'memo') { acknowledge(); return; }
+  if (phase === 'case') {
+    keyClick();
+    if (e.key === 'g' || e.key === 'G') decide('GIFT');
+    if (e.key === 'c' || e.key === 'C') decide('COAL');
+    if (e.key === 'd' || e.key === 'D') decide('DEFERRED');
+  }
+  if (phase === 'auditboot') { showAudit(); return; }
+  if (phase === 'audit') {
+    keyClick();
+    if (e.key === 'g' || e.key === 'G') auditDecide('GIFT');
+    if (e.key === 'c' || e.key === 'C') auditDecide('COAL');
+    if (e.key === 'd' || e.key === 'D') auditDecide('DEFERRED');
+  }
+  if (phase === 'end' && e.key === 'Enter') {
+    if (day >= TOTAL_SHIFTS) startAuditBoot();
+    else { day++; startDay(); }
+  }
+});
+
+showBoot();
+</script>
+</body>
+</html>
