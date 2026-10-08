@@ -83,8 +83,3 @@ doubt of *12 Angry Men*; the surveillance interfaces of *Orwell*.
 ## License
 
 CC BY-NC 4.0 — play, study, exhibit. Do not resell.
-
-## Companion piece
-
-*NO REWIND* — a generative sound-wave piece about time.
-https://YOURNAME.github.io/no-rewind/
